@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XML Flatten PoC</title>
+    <!-- Bootstrap 5 CSS CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Custom styles for responsive/fluid design -->
+    <style>
+        body {
+            padding: 1rem;
+        }
+        .container-fluid {
+            max-width: 100%;
+        }
+        /* Mobile first approach */
+        @media (min-width: 576px) {
+            .sm-container {
+                max-width: 540px;
+            }
+        }
+        @media (min-width: 768px) {
+            .md-container {
+                max-width: 720px;
+            }
+        }
+        @media (min-width: 992px) {
+            .lg-container {
+                max-width: 960px;
+            }
+        }
+        @media (min-width: 1200px) {
+            .xl-container {
+                max-width: 1140px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="container-fluid">
+        <h1 class="text-center mb-4">XML Flatten PoC</h1>
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Procesador de CFDI</h5>
+                        <div id="file-upload">
+                            <input type="file" id="xmlFile" accept=".xml" class="form-control mb-3">
+                            <button id="processBtn" class="btn btn-primary w-100">Procesar XML</button>
+                        </div>
+                        <div id="results" class="mt-4">
+                            <div v-if="loading" class="text-center">
+                                <div class="spinner-border" role="status">
+                                    <span class="visually-hidden">Cargando...</span>
+                                </div>
+                            </div>
+                            <div v-else-if="error" class="alert alert-danger">
+                                {{ error }}
+                            </div>
+                            <div v-else-if="flattenedData.length > 0">
+                                <h6>Datos Aplanados:</h6>
+                                <table class="table table-sm table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>Path</th>
+                                            <th>Value</th>
+                                            <th>Type</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="item in flattenedData" :key="item.path">
+                                            <td>{{ item.path }}</td>
+                                            <td>{{ item.value }}</td>
+                                            <td>{{ item.type }}</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div v-else class="text-center text-muted">
+                                No se encontraron datos para mostrar
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vue.js CDN -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Bootstrap 5 JS Bundle CDN (includes Popper) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const { createApp, ref } = Vue;
+
+        createApp({
+            setup() {
+                const loading = ref(false);
+                const error = ref(null);
+                const flattenedData = ref([]);
+
+                const processFile = async () => {
+                    const fileInput = document.getElementById('xmlFile');
+                    if (!fileInput.files.length) {
+                        error.value = 'Por favor seleccione un archivo XML';
+                        return;
+                    }
+
+                    loading.value = true;
+                    error.value = null;
+                    flattenedData.value = [];
+
+                    try {
+                        const file = fileInput.files[0];
+                        const text = await file.text();
+                        
+                        // TODO: Implement XML to JSON conversion using xml2json
+                        // TODO: Implement flattening using dbl-utils flatten
+                        // TODO: Store in SQLite (this would be done via API call to backend)
+                        
+                        // For now, just show a mock response
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // Mock flattened data
+                        flattenedData.value = [
+                            { path: 'factura.emisor.nombre', value: 'Empresa S.A. de C.V.', type: 'string' },
+                            { path: 'factura.emisor.rfc', value: 'XAXX010101000', type: 'string' },
+                            { path: 'factura.receptor.nombre', value: 'Cliente Ejemplo', type: 'string' },
+                            { path: 'factura.conceptos.0.descripcion', value: 'Producto 1', type: 'string' },
+                            { path: 'factura.conceptos.0.cantidad', value: '2', type: 'number' },
+                            { path: 'factura.conceptos.0.valorUnitario', value: '100.00', type: 'number' },
+                            { path: 'factura.total', value: '240.00', type: 'number' }
+                        ];
+                        
+                    } catch (err) {
+                        error.value = 'Error al procesar el archivo: ' + err.message;
+                    } finally {
+                        loading.value = false;
+                    }
+                };
+
+                return {
+                    loading,
+                    error,
+                    flattenedData,
+                    processFile
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

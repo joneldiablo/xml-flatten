@@ -1,0 +1,26 @@
+{
+  "name": "xml-flatten",
+  "version": "1.0.0",
+  "description": "XML to JSON to Flatten to SQLite with Admin UI",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run cli.ts server --port 3000 --frontend",
+    "build": "tsc",
+    "start": "node dist/backend/src/index.js",
+    "cli": "bun run cli.ts",
+    "node": "NODE_ENV=production node dist/backend/src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "sql.js": "^1.11.0",
+    "fast-xml-parser": "^4.5.0",
+    "yargs": "^17.7.2",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/yargs": "^17.0.32",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.5.0"
+  }
+}
