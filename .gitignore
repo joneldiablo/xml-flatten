@@ -11,3 +11,6 @@ data/*.db-wal
 .DS_Store
 *.swp
 *.swo
+package-lock.json
+yarn.lock
+.bun.lock

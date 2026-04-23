@@ -1,96 +1,48 @@
-import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
+import knex from 'knex';
 import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', '..', 'data', 'xml-flatten.db');
+const dbPath = process.env.DB_PATH || path.join(process.cwd(), 'data', 'xml-flatten.db');
 
-let db: SqlJsDatabase | null = null;
-let initialized = false;
+let db = knex({
+  client: 'better-sqlite3',
+  connection: { filename: dbPath },
+  useNullAsDefault: true
+});
 
-export async function getDb(): Promise<SqlJsDatabase> {
-  if (!db) {
-    const SQL = await initSqlJs();
-    
-    let data: Buffer | null = null;
-    if (fs.existsSync(DB_PATH)) {
-      data = fs.readFileSync(DB_PATH);
-    }
-    
-    db = data ? new SQL.Database(data) : new SQL.Database();
-    initializeSchema(db);
-  }
+export function getDb() {
   return db;
 }
 
-function initializeSchema(database: SqlJsDatabase): void {
-  if (initialized) return;
+export async function initializeTables() {
+  const hasDocuments = await db.schema.hasTable('documents');
+  if (!hasDocuments) {
+    await db.schema.createTable('documents', (t) => {
+      t.increments('id').primary();
+      t.string('uuid').notNullable().unique();
+      t.timestamp('created_at').defaultTo(db.fn.now());
+    });
+  }
   
-  database.run(`
-    CREATE TABLE IF NOT EXISTS documents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      uuid TEXT NOT NULL UNIQUE,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-  
-  database.run(`
-    CREATE TABLE IF NOT EXISTS flattened_data (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      document_uuid TEXT NOT NULL,
-      path TEXT NOT NULL,
-      value TEXT,
-      type TEXT,
-      FOREIGN KEY (document_uuid) REFERENCES documents(uuid)
-    )
-  `);
-  
-  database.run(`CREATE INDEX IF NOT EXISTS idx_flattened_uuid ON flattened_data(document_uuid)`);
-  database.run(`CREATE INDEX IF NOT EXISTS idx_flattened_path ON flattened_data(path)`);
-  
-  initialized = true;
-  saveDb(database);
-}
-
-export function saveDb(database?: SqlJsDatabase): void {
-  const dbToSave = database || db;
-  if (dbToSave) {
-    const data = dbToSave.export();
-    const buffer = Buffer.from(data);
-    const dir = path.dirname(DB_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(DB_PATH, buffer);
+  const hasFlattened = await db.schema.hasTable('flattened_data');
+  if (!hasFlattened) {
+    await db.schema.createTable('flattened_data', (t) => {
+      t.increments('id').primary();
+      t.string('document_uuid').notNullable().references('uuid').inTable('documents');
+      t.string('path').notNullable();
+      t.string('value');
+      t.string('type');
+    });
+    
+    await db.schema.alterTable('flattened_data', (t) => {
+      t.index('document_uuid');
+      t.index('path');
+    });
   }
 }
 
-export function closeDb(): void {
-  if (db) {
-    saveDb(db);
-    db.close();
-    db = null;
-    initialized = false;
-  }
+export async function resetDatabase() {
+  await db('flattened_data').del();
+  await db('documents').del();
 }
 
-export function queryAll(sql: string, params: any[] = []): any[] {
-  if (!db) return [];
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const results: any[] = [];
-  while (stmt.step()) {
-    results.push(stmt.getAsObject());
-  }
-  stmt.free();
-  return results;
-}
-
-export function run(sql: string, params: any[] = []): void {
-  if (!db) return;
-  db.run(sql, params);
-  saveDb(db);
-}
-
-export default { getDb, closeDb, queryAll, run, saveDb };
+export default db;

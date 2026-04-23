@@ -1,7 +1,9 @@
 import { XMLParser } from 'fast-xml-parser';
 import { flatten, serialize } from '../utils/flatten.js';
 import { v4 as uuidv4 } from 'uuid';
-import { getDb, run, queryAll, saveDb } from '../db/database.js';
+import { getDb } from '../db/database.js';
+
+const db = getDb();
 
 const parserOptions = {
   ignoreAttributes: false,
@@ -12,11 +14,20 @@ const parserOptions = {
   trim: true,
 };
 
+const PATH_UUID = (process.env.PATH_UUID || '').replace(/:/g, '\\:');
+
 export interface ProcessResult {
   uuid: string;
   document: Record<string, unknown>;
   flattened: Record<string, unknown>;
   serialized: Array<{ path: string; value: string; type: string }>;
+}
+
+function extractUuidFromDocument(flatJson: Record<string, unknown>): string | null {
+  if (!PATH_UUID) return null;
+  const value = flatJson[PATH_UUID];
+  if (typeof value === 'string' && value) return value;
+  return null;
 }
 
 export async function processXml(xmlString: string): Promise<ProcessResult> {
@@ -25,19 +36,21 @@ export async function processXml(xmlString: string): Promise<ProcessResult> {
   
   const flatJson = flatten(jsonObj, { delimiter: '.' });
   
+  const docUuid = extractUuidFromDocument(flatJson) || uuidv4();
+  
+  await db('documents').insert({ uuid: docUuid });
+  
   const serializedData = await serialize(flatJson, {
     groupKey: 'document_uuid',
   });
   
-  const docUuid = uuidv4();
-  
-  run('INSERT INTO documents (uuid) VALUES (?)', [docUuid]);
-  
   for (const item of serializedData) {
-    run(
-      'INSERT INTO flattened_data (document_uuid, path, value, type) VALUES (?, ?, ?, ?)',
-      [docUuid, item.path, String(item.value), item.type]
-    );
+    await db('flattened_data').insert({
+      document_uuid: docUuid,
+      path: item.path,
+      value: String(item.value),
+      type: item.type
+    });
   }
   
   return {
@@ -46,6 +59,15 @@ export async function processXml(xmlString: string): Promise<ProcessResult> {
     flattened: flatJson,
     serialized: serializedData.map(s => ({ path: s.path, value: String(s.value), type: s.type })),
   };
+}
+
+export async function processXmlBatch(xmlStrings: string[]): Promise<ProcessResult[]> {
+  const results: ProcessResult[] = [];
+  for (const xml of xmlStrings) {
+    const result = await processXml(xml);
+    results.push(result);
+  }
+  return results;
 }
 
 export interface DataQuery {
@@ -57,112 +79,81 @@ export interface DataQuery {
 }
 
 export function getAllData(query: DataQuery = {}) {
-  let sql = `
-    SELECT 
-      fd.document_uuid as uuid,
-      fd.path,
-      fd.value,
-      fd.type,
-      d.created_at as created
-    FROM flattened_data fd
-    JOIN documents d ON d.uuid = fd.document_uuid
-  `;
-  
-  const conditions: string[] = [];
-  const params: any[] = [];
+  let q = db('flattened_data as fd')
+    .join('documents as d', 'd.uuid', 'fd.document_uuid')
+    .select(
+      'fd.document_uuid as uuid',
+      'fd.path',
+      'fd.value',
+      'fd.type',
+      'd.created_at as created'
+    );
   
   if (query.filters) {
     for (const [key, value] of Object.entries(query.filters)) {
-      if (value === undefined || value === null) continue;
+      if (value === undefined || value === null || value === '') continue;
       
-      const col = key.includes('.') ? key : `fd.${key}`;
+      let col = key;
+      if (key === 'uuid') col = 'fd.document_uuid';
+      else if (!key.includes('.')) col = `fd.${key}`;
       
       if (typeof value === 'object' && value !== null) {
         for (const [op, val] of Object.entries(value as Record<string, any>)) {
           switch (op) {
-            case '$eq':
-              conditions.push(`${col} = ?`);
-              params.push(val);
-              break;
-            case '$ne':
-              conditions.push(`${col} != ?`);
-              params.push(val);
-              break;
-            case '$gt':
-              conditions.push(`${col} > ?`);
-              params.push(val);
-              break;
-            case '$gte':
-              conditions.push(`${col} >= ?`);
-              params.push(val);
-              break;
-            case '$lt':
-              conditions.push(`${col} < ?`);
-              params.push(val);
-              break;
-            case '$lte':
-              conditions.push(`${col} <= ?`);
-              params.push(val);
-              break;
-            case '$like':
-              conditions.push(`${col} LIKE ?`);
-              params.push(`%${val}%`);
-              break;
+            case '$eq': q = q.where(col, val); break;
+            case '$ne': q = q.where(col, '!=', val); break;
+            case '$gt': q = q.where(col, '>', val); break;
+            case '$gte': q = q.where(col, '>=', val); break;
+            case '$lt': q = q.where(col, '<', val); break;
+            case '$lte': q = q.where(col, '<=', val); break;
+            case '$like': q = q.where(col, 'like', `%${val}%`); break;
             case '$in':
-              if (Array.isArray(val)) {
-                conditions.push(`${col} IN (${val.map(() => '?').join(',')})`);
-                params.push(...val);
-              }
+              if (Array.isArray(val)) q = q.whereIn(col, val);
               break;
           }
         }
       } else {
-        conditions.push(`${col} = ?`);
-        params.push(value);
+        const valStr = String(value);
+        if (!isNaN(Number(valStr))) {
+          q = q.where(col, Number(valStr));
+        } else {
+          q = q.where(col, 'like', `%${valStr}%`);
+        }
       }
     }
   }
   
   if (query.q) {
-    conditions.push(`(fd.path LIKE ? OR fd.value LIKE ? OR fd.document_uuid LIKE ? OR d.uuid LIKE ?)`);
-    params.push(`%${query.q}%`, `%${query.q}%`, `%${query.q}%`, `%${query.q}%`);
+    q = q.where(function() {
+      this.where('fd.path', 'like', `%${query.q}%`)
+        .orWhere('fd.value', 'like', `%${query.q}%`)
+        .orWhere('fd.document_uuid', 'like', `%${query.q}%`)
+        .orWhere('d.uuid', 'like', `%${query.q}%`);
+    });
   }
   
-  if (conditions.length > 0) {
-    sql += ' WHERE ' + conditions.join(' AND ');
-  }
-  
-  const orderParts: string[] = [];
   if (query.orderBy) {
     for (const [col, dir] of Object.entries(query.orderBy)) {
-      const orderCol = col.includes('.') || col === 'created' || col === 'uuid' ? col : `fd.${col}`;
-      orderParts.push(`${orderCol} ${dir.toUpperCase()}`);
+      let orderCol = col;
+      if (col === 'uuid') orderCol = 'fd.document_uuid';
+      else if (!col.includes('.')) orderCol = `fd.${col}`;
+      q = q.orderBy(orderCol, dir);
     }
-  }
-  if (orderParts.length > 0) {
-    sql += ' ORDER BY ' + orderParts.join(', ');
   } else {
-    sql += ' ORDER BY d.created_at DESC, fd.id';
+    q = q.orderBy('d.created_at', 'desc').orderBy('fd.id');
   }
   
   const limit = query.limit || 50;
   const page = query.page || 0;
-  sql += ` LIMIT ${limit} OFFSET ${page * limit}`;
+  q = q.limit(limit).offset(page * limit);
   
-  return queryAll(sql, params);
+  return q;
 }
 
 export function getDocuments() {
-  return queryAll(`
-    SELECT uuid, created_at as created FROM documents ORDER BY created_at DESC
-  `);
+  return db('documents').select('uuid', 'created_at as created').orderBy('created_at', 'desc');
 }
 
 export function getDocumentByUuid(uuid: string) {
-  return queryAll(`
-    SELECT path, value, type 
-    FROM flattened_data 
-    WHERE document_uuid = ?
-    ORDER BY id
-  `, [uuid]);
+  return db('flattened_data').where('document_uuid', uuid).select('path', 'value', 'type').orderBy('id');
 }

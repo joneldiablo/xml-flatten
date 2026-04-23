@@ -1,11 +1,12 @@
-FROM oven/bun:1
+FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json ./
-COPY bun.lock ./
+RUN apk add --no-cache python3 make g++
 
-RUN bun install --frozen-lockfile
+COPY package.json package-lock.json ./
+
+RUN npm ci
 
 COPY backend ./backend
 COPY frontend ./frontend
@@ -17,7 +18,9 @@ RUN mkdir -p /app/data
 EXPOSE 3000
 
 ENV PORT=3000
-ENV ENABLE_FRONTEND=true
 ENV DB_PATH=/app/data/xml-flatten.db
+ENV ENABLE_FRONTEND=true
+ENV PATH_UUID=cfdi:Comprobante.cfdi:Complemento.tfd:TimbreFiscalDigital.@_UUID
+ENV BATCH_SIZE=500
 
-CMD ["bun", "run", "cli.ts", "server"]
+CMD ["npm", "run", "cli", "--", "server"]

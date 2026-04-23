@@ -5,6 +5,19 @@ export type FlatCopyOptions = {
   prefix?: string;
 };
 
+const ESCAPE_CHAR = '\\:';
+const UNESCAPE_CHAR = ':';
+
+function escapeKey(key: string | undefined): string | undefined {
+  if (!key) return key;
+  if (key.includes(ESCAPE_CHAR)) return key.replace(ESCAPE_CHAR, UNESCAPE_CHAR);
+  return key.includes(':') ? key.replace(':', ESCAPE_CHAR) : key;
+}
+
+function unescapeKey(key: string): string {
+  return key.replace(ESCAPE_CHAR, UNESCAPE_CHAR);
+}
+
 export function flatten(
   object: object,
   options: FlatCopyOptions = {}
@@ -22,7 +35,8 @@ export function flatten(
     key: string | undefined,
     index?: string
   ): void => {
-    const newIndex = index ? [index, key].join(options.delimiter) : key;
+    const escapedKey = escapeKey(key);
+    const newIndex = index ? [index, escapedKey].join(options.delimiter) : escapedKey;
 
     if (typeof element === 'object' && element !== null) {
       if (Array.isArray(element)) {
@@ -32,7 +46,7 @@ export function flatten(
           element.forEach((e, i) => recursive(e, i.toString(), newIndex));
         }
       } else {
-        if (key && options.ommit?.includes(key)) {
+        if (key && options.ommit?.includes(unescapeKey(key))) {
           newObject[newIndex!] = element;
         } else {
           Object.entries(element as Record<string, unknown>).forEach(([i, e]) =>
@@ -104,7 +118,7 @@ export const serialize = async (
   const flat = flatten(data, { delimiter: '/' });
   
   return Object.entries(flat).map(([path, value]) => ({
-    path,
+    path: path.replace(/\\:/g, ':'),
     value: String(value),
     type: typeof value,
     [groupKey]: '',
